@@ -78,6 +78,10 @@ class LangGraphPDFWrapper:
 
         self.graph = self._build_graph()
 
+    def llm_decide(self,state:AgentState):
+        with sentry_sdk.start_transaction(op="node",name="llm_decide"):
+            trace=langfuse.trace(name="llm_decide")
+            span=trace.span(name="llm_decide_query",input=state["input"])
 
     # -----------------------------
     # Node 1 – LLM decides query
@@ -98,8 +102,8 @@ class LangGraphPDFWrapper:
                 prompt = f"""
 You are an AI assistant. You have access to PDF documents.
 
-User question:
-{state["input"]}
+    User question:
+    {state["input"]}
 
 Generate a short search query to retrieve relevant information from the PDF.
 
@@ -116,6 +120,9 @@ Return ONLY the query text without quotes.
                 sentry_sdk.capture_exception(e)
                 raise
 
+    def pdf_tool(self,state:AgentState):
+        with sentry_sdk.start_transaction(op="node",name="pdf_tool"):
+            trace=langfuse.trace(name="pdf_tool")
 
     # -----------------------------
     # Node 2 – PDF Retrieval Tool
@@ -134,8 +141,8 @@ Return ONLY the query text without quotes.
                 with open(pdf_path, "rb") as f:
                     file_hash = hashlib.md5(f.read()).hexdigest()
 
-                index_dir = "faiss_indexes"
-                index_path = os.path.join(index_dir, file_hash)
+                index_dir="faiss_indexes"
+                index_path=os.path.join(index_dir,file_hash)
 
                 embeddings = HuggingFaceEmbeddings(
                     model_name="all-MiniLM-L6-v2"
@@ -154,16 +161,12 @@ Return ONLY the query text without quotes.
                     loader = PyPDFLoader(pdf_path)
                     docs = loader.load()
 
-                    splitter = RecursiveCharacterTextSplitter(
-                        chunk_size=1000,
-                        chunk_overlap=200
-                    )
+                    splitter=RecursiveCharacterTextSplitter(chunk_size=1000,chunk_overlap=200)
+                    documents=splitter.split_documents(docs)
 
-                    documents = splitter.split_documents(docs)
+                    db=FAISS.from_documents(documents,embeddings)
 
-                    db = FAISS.from_documents(documents, embeddings)
-
-                    os.makedirs(index_dir, exist_ok=True)
+                    os.makedirs(index_dir,exist_ok=True)
                     db.save_local(index_path)
 
                 results = db.similarity_search(
@@ -182,7 +185,7 @@ Return ONLY the query text without quotes.
 
                 span.end(output=content)
 
-                return {"search_results": content}
+                return {"search_results":content}
 
             except Exception as e:
                 sentry_sdk.capture_exception(e)
@@ -209,11 +212,11 @@ Return ONLY the query text without quotes.
                 prompt = f"""
 You are an AI assistant.
 
-User question:
-{state['input']}
+    User question:
+    {state['input']}
 
-Information retrieved from PDF documents:
-{state['search_results']}
+    Information retrieved from PDF documents:
+    {state['search_results']}
 
 Answer the user question using the retrieved information.
 """
@@ -237,9 +240,9 @@ Answer the user question using the retrieved information.
 
         builder = StateGraph(AgentState)
 
-        builder.add_node("decide", self.llm_decide)
-        builder.add_node("pdf_tool", self.pdf_tool)
-        builder.add_node("final", self.final_llm)
+        builder.add_node("decide",self.llm_decide)
+        builder.add_node("pdf_tool",self.pdf_tool)
+        builder.add_node("final",self.final_llm)
 
         builder.set_entry_point("decide")
 
